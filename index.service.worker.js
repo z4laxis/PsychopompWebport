@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1788607060|29880679';
+const CACHE_VERSION = 'z4laxis|20260905|claim';
 /** @type {string} */
 const CACHE_PREFIX = 'Psychopomp-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
@@ -30,9 +30,15 @@ self.addEventListener('activate', (event) => {
 			// Remove old caches.
 			return Promise.all(keys.filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME).map((key) => caches.delete(key)));
 		}
-	).then(function () {
+	).then(async function () {
 		// Enable navigation preload if available.
-		return ('navigationPreload' in self.registration) ? self.registration.navigationPreload.enable() : Promise.resolve();
+		if ('navigationPreload' in self.registration) {
+			try { await self.registration.navigationPreload.enable(); } catch (e) { /* ignore */ }
+		}
+		// Take control of the page immediately so the injected COOP/COEP
+		// headers apply without waiting for the next navigation.
+		await self.skipWaiting();
+		await self.clients.claim();
 	}));
 });
 

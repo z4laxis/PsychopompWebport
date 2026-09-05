@@ -235,47 +235,70 @@ const engine = new Engine(GODOT_CONFIG);
 		});
 	}
 
-	const missing = Engine.getMissingFeatures({
-		threads: GODOT_THREADS_ENABLED,
-	});
-
-	if (missing.length !== 0) {
-		if (GODOT_CONFIG['serviceWorker'] && GODOT_CONFIG['ensureCrossOriginIsolationHeaders'] && 'serviceWorker' in navigator) {
-			let serviceWorkerRegistrationPromise;
-			try {
-				serviceWorkerRegistrationPromise = navigator.serviceWorker.getRegistration();
-			} catch (err) {
-				serviceWorkerRegistrationPromise = Promise.reject(new Error('Service worker registration failed.'));
-			}
-			// There's a chance that installing the service worker would fix the issue
-			Promise.race([
-				serviceWorkerRegistrationPromise.then((registration) => {
-					if (registration != null) {
-						return Promise.reject(new Error('Service worker already exists.'));
-					}
-					return registration;
-				}).then(() => engine.installServiceWorker()),
-				// For some reason, `getRegistration()` can stall
-				new Promise((resolve) => {
-					setTimeout(() => resolve(), 2000);
-				}),
-			]).then(() => {
-				// Reload if there was no error.
-				window.location.reload();
-			}).catch((err) => {
-				console.error('Error while registering service worker:', err);
-			});
-		} else {
-			// Display the message as usual
-			const missingMsg = 'Error\nThe following features required to run Godot projects on the Web are missing:\n';
-			displayFailureNotice(missingMsg + missing.join('\n'));
+	// ------------------------------------------------------------------
+	// Robust boot: clean up any stale service worker, register ours, wait
+	// until it controls this page, reload once if we are not yet cross-origin
+	// isolated, and only then boot the engine.
+	// ------------------------------------------------------------------
+	function ensureServiceWorker() {
+		if (!GODOT_CONFIG['serviceWorker'] || !('serviceWorker' in navigator)) {
+			return Promise.resolve(false);
 		}
-	} else {
-		setStatusMode('progress');
-		fetchAndAssembleParts(LOADER_PARTS).then(bootGame).then(() => {
-			setStatusMode('hidden');
-		}, displayFailureNotice);
+		// Unregister any service worker that is not ours so a stale worker
+		// (e.g. from an earlier broken build) can never hijack this page.
+		return navigator.serviceWorker.getRegistrations().then(function (regs) {
+			const jobs = regs.map(function (reg) {
+				if (reg.active && reg.active.scriptURL.indexOf('index.service.worker.js') === -1) {
+					return reg.unregister();
+				}
+				return Promise.resolve();
+			});
+			return Promise.all(jobs);
+		}).then(function () {
+			return navigator.serviceWorker.register(GODOT_CONFIG['serviceWorker']);
+		}).then(function () {
+			if (navigator.serviceWorker.controller) {
+				// Already controlled by a worker: isolation should apply.
+				return Promise.resolve();
+			}
+			return navigator.serviceWorker.ready;
+		}).then(function () {
+			// Give the (just activated) worker a beat to claim this page.
+			return new Promise(function (resolve) {
+				setTimeout(resolve, 500);
+			});
+		});
 	}
+
+	function isIsolated() {
+		return typeof window.crossOriginIsolated !== 'undefined' && window.crossOriginIsolated === true;
+	}
+
+	function run() {
+		if (isIsolated()) {
+			// Cross-origin isolation active (server headers or our service
+			// worker). Boot the game directly.
+			return fetchAndAssembleParts(LOADER_PARTS).then(bootGame);
+		}
+
+		// Not isolated. If a service worker is configured, install/refresh it
+		// and reload once so it can serve this page with COOP/COEP headers.
+		if (GODOT_CONFIG['serviceWorker'] && 'serviceWorker' in navigator) {
+			return ensureServiceWorker().then(function () {
+				// Give the worker a moment to take control before reloading.
+				window.location.reload();
+				// Never resolves; the reload tears this page down.
+				return new Promise(function () { });
+			});
+		}
+
+		throw new Error('Cross-origin isolation is required (COOP/COEP headers) but no service worker is configured. Host this export with a server that sends the COOP/COEP headers.');
+	}
+
+	setStatusMode('progress');
+	run().then(() => {
+		setStatusMode('hidden');
+	}, displayFailureNotice);
 }());
 		</script>
 	</body>
