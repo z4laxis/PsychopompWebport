@@ -90,8 +90,9 @@ body {
 	z-index: 1;
 }
 		</style>
-		<link id="-gd-engine-icon" rel="icon" type="image/png" href="Psychopomp.icon.png" />
-<link rel="apple-touch-icon" href="Psychopomp.apple-touch-icon.png"/>
+		<link id="-gd-engine-icon" rel="icon" type="image/png" href="index.icon.png" />
+<link rel="apple-touch-icon" href="index.apple-touch-icon.png"/>
+<link rel="manifest" href="index.manifest.json">
 
 	</head>
 	<body>
@@ -104,14 +105,42 @@ body {
 		</noscript>
 
 		<div id="status">
-			<img id="status-splash" class="show-image--false fullsize--true use-filter--true" src="Psychopomp.png" alt="">
+			<img id="status-splash" class="show-image--false fullsize--true use-filter--true" src="index.png" alt="">
 			<progress id="status-progress"></progress>
 			<div id="status-notice"></div>
 		</div>
 
-		<script src="Psychopomp.js"></script>
+		<script src="index.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"Psychopomp","experimentalVK":false,"fileSizes":{"Psychopomp.pck":121191684,"Psychopomp.wasm":67135515},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
+// ============================================================================
+// CHUNK LOADER - PsychoPomp
+// ----------------------------------------------------------------------------
+// index.pck is 179,406,072 bytes and is split into 8 chunks of 22,425,759
+// bytes each (index.pck.part1 .. index.pck.part8). This page fetches every
+// part IN ORDER, concatenates the bytes, and hands the assembled pack to the
+// engine through its buffer API (preloadFile + --main-pack).
+//
+// Keep ALL files together in the SAME folder/host as this page:
+//   index.js, index.wasm, index.service.worker.js, index.offline.html,
+//   index.manifest.json, the icons/worklets, and the 8 index.pck.partN files.
+//
+// No server headers are required: the export's service worker
+// (index.service.worker.js) injects cross-origin isolation on any HTTPS
+// host, so plain static hosts (e.g. GitHub Pages) work.
+// ============================================================================
+const LOADER_PARTS = [
+	"index.pck.part1",
+	"index.pck.part2",
+	"index.pck.part3",
+	"index.pck.part4",
+	"index.pck.part5",
+	"index.pck.part6",
+	"index.pck.part7",
+	"index.pck.part8",
+];
+// ============================================================================
+
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":179406072,"index.wasm":56194770},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
 const GODOT_THREADS_ENABLED = true;
 const engine = new Engine(GODOT_CONFIG);
 
@@ -162,6 +191,50 @@ const engine = new Engine(GODOT_CONFIG);
 		initializing = false;
 	}
 
+	function fetchAndAssembleParts(parts) {
+		const total = Number(Object(GODOT_CONFIG.fileSizes)['index.pck']) || 0;
+		if (total > 0) {
+			statusProgress.value = 0;
+			statusProgress.max = total;
+		}
+		let loaded = 0;
+		const buffers = [];
+		const chain = parts.reduce(function (promise, url, i) {
+			return promise.then(function () {
+				return fetch(url).then(function (response) {
+					if (!response.ok) {
+						throw new Error("Failed to load part " + (i + 1) + ' of ' + parts.length + ': ' + url + ' (HTTP ' + response.status + ')');
+					}
+					return response.arrayBuffer();
+				}).then(function (buf) {
+					loaded += buf.byteLength;
+					if (total > 0) {
+						statusProgress.value = loaded;
+					}
+					buffers.push(buf);
+				});
+			});
+		}, Promise.resolve());
+		return chain.then(function () {
+			const pck = new Uint8Array(loaded);
+			let offset = 0;
+			buffers.forEach(function (buf) {
+				pck.set(new Uint8Array(buf), offset);
+				offset += buf.byteLength;
+			});
+			return pck.buffer;
+		});
+	}
+
+	function bootGame(pckBuffer) {
+		engine.config.args = ['--main-pack', 'index.pck'];
+		return engine.init('index').then(function () {
+			return engine.preloadFile(pckBuffer, 'index.pck');
+		}).then(function () {
+			return engine.start();
+		});
+	}
+
 	const missing = Engine.getMissingFeatures({
 		threads: GODOT_THREADS_ENABLED,
 	});
@@ -199,17 +272,7 @@ const engine = new Engine(GODOT_CONFIG);
 		}
 	} else {
 		setStatusMode('progress');
-		engine.startGame({
-			'onProgress': function (current, total) {
-				if (current > 0 && total > 0) {
-					statusProgress.value = current;
-					statusProgress.max = total;
-				} else {
-					statusProgress.removeAttribute('value');
-					statusProgress.removeAttribute('max');
-				}
-			},
-		}).then(() => {
+		fetchAndAssembleParts(LOADER_PARTS).then(bootGame).then(() => {
 			setStatusMode('hidden');
 		}, displayFailureNotice);
 	}
@@ -217,4 +280,3 @@ const engine = new Engine(GODOT_CONFIG);
 		</script>
 	</body>
 </html>
-
